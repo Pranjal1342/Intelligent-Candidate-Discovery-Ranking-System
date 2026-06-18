@@ -24,15 +24,23 @@ ehthumbs.db
 Desktop.ini
 .DS_Store
 
-# Large datasets and project outputs
+# Large datasets and project outputs (not committed — provided by competition)
 candidates.jsonl
-*.jsonl
 submission.csv
-reasoning_trace.jsonl
 logs/
 *.log
 
-# Precomputed files (ignore huge intermediate indices, keep the trained models)
+# Runtime outputs (regenerated on each run)
+reasoning_trace.jsonl
+
+# Precomputed files — ignore large indices, keep trained model artifacts
 precomputed/*
 !precomputed/lgbm_model.txt
 !precomputed/lgbm_model.pkl
+
+# Diagnostic / dev-only scripts (not part of submission)
+diagnostics/
+
+# Temp files created during validation runs
+_tmp_*.jsonl
+_tmp_*.csv
