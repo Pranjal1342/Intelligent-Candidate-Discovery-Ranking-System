@@ -107,12 +107,26 @@ def load_artifacts(precomputed_dir: str, logger: logging.Logger):
             model = pickle.load(f)
         logger.info("Stage 0: LightGBM loaded from pickle (legacy path)")
 
+    # ── Static Features ──────────────────────────────────────────────────
+    static_path = os.path.join(precomputed_dir, "static_features.pkl")
+    static_features = None
+    if os.path.isfile(static_path):
+        try:
+            t0 = time.time()
+            with open(static_path, "rb") as f:
+                static_features = pickle.load(f)
+            logger.info("Stage 0: Loaded static features (%d candidates) in %.2fs", len(static_features), time.time() - t0)
+        except Exception as exc:
+            logger.warning("static_features.pkl load failed (%s), falling back to live calculation", exc)
+    else:
+        logger.warning("static_features.pkl not found — falling back to live calculation")
+
     logger.info(
         "Artifacts loaded: BM25 scorer (%s, %d candidates), LightGBM model",
         type(bm25).__name__,
         len(candidate_ids),
     )
-    return bm25, candidate_ids, model
+    return bm25, candidate_ids, model, static_features
 
 
 
@@ -232,6 +246,7 @@ def extract_features_for_ranking(
     bm25_scores: Dict[str, float],
     stage1_bm25_median: float,
     logger: logging.Logger,
+    static_features: Optional[Dict[str, Dict[str, float]]] = None,
 ) -> Tuple[np.ndarray, List[str]]:
     """
     Extract the 22-feature matrix for all Stage 1 candidates.
@@ -254,6 +269,7 @@ def extract_features_for_ranking(
                 candidate, jd_config,
                 bm25_score=bm25_score,
                 stage1_bm25_median=stage1_bm25_median,
+                precomputed_static=static_features.get(cid) if static_features else None
             )
             row = [fv[col] for col in FEATURE_COLUMNS]
         except Exception as e:
@@ -575,7 +591,7 @@ def main() -> None:
     # Stage 0: Load precomputed artifacts
     # -----------------------------------------------------------------------
     t0 = time.time()
-    bm25, candidate_ids, model = load_artifacts(precomputed_dir, logger)
+    bm25, candidate_ids, model, static_features = load_artifacts(precomputed_dir, logger)
     logger.info("Stage 0 (load artifacts): %.2fs", time.time() - t0)
 
     # -----------------------------------------------------------------------
@@ -627,7 +643,8 @@ def main() -> None:
     # -----------------------------------------------------------------------
     t2b = time.time()
     X, ordered_ids = extract_features_for_ranking(
-        stage1_candidates, jd_config, bm25_scores, stage1_bm25_median, logger
+        stage1_candidates, jd_config, bm25_scores, stage1_bm25_median, logger,
+        static_features=static_features
     )
     logger.info("Stage 2b (features): %.2fs", time.time() - t2b)
 
@@ -674,7 +691,8 @@ def main() -> None:
         bs = bm25_scores.get(cid, 0.0)
         try:
             feature_vectors[cid] = build_feature_vector(
-                c, jd_config, bs, stage1_bm25_median
+                c, jd_config, bs, stage1_bm25_median,
+                precomputed_static=static_features.get(cid) if static_features else None
             )
         except Exception:
             feature_vectors[cid] = {col: 0.0 for col in FEATURE_COLUMNS}

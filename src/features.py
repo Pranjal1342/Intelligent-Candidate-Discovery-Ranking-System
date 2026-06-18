@@ -810,6 +810,7 @@ def build_feature_vector(
     jd_config: JDConfig,
     bm25_score: float,
     stage1_bm25_median: float = 0.0,
+    precomputed_static: Optional[Dict[str, float]] = None,
 ) -> Dict[str, float]:
     """
     Build the complete 22-feature vector for a single candidate.
@@ -819,6 +820,7 @@ def build_feature_vector(
         jd_config: Parsed JD configuration.
         bm25_score: BM25 retrieval score from Stage 1.
         stage1_bm25_median: Median BM25 score of Stage 1 candidates (for c5).
+        precomputed_static: Optional precomputed dictionary of the 18 static features.
 
     Returns:
         Dict mapping feature name -> float value.
@@ -836,35 +838,58 @@ def build_feature_vector(
     # -----------------------------------------------------------------------
     # Compute all individual features
     # -----------------------------------------------------------------------
-    yoe = compute_yoe(candidate)
-    hard_req = hard_req_coverage_score(candidate, jd_config)
-
-    cons = consistency_score(
-        candidate,
-        bm25_score=bm25_score,
-        median_bm25=stage1_bm25_median,
-    )
-
-    param_a = compute_param_a_systems_depth(candidate)
-    param_b = compute_param_b_availability(candidate)
-    param_c = compute_param_c_tenure(candidate)
-    param_d = compute_param_d_notice_exp(candidate)
-    param_e = compute_param_e_credibility(candidate)
-    param_f = compute_param_f_consulting(candidate)
-    param_g = compute_param_g_location(candidate)
-    param_h = compute_param_h_github(candidate)
-    title_ai_frac = compute_title_ai_fraction(candidate)
-    prod_sig_log = compute_prod_signal_log(candidate)
-
-    flag_consulting_only = compute_flag_consulting_only(candidate)
-    flag_title_chaser = compute_flag_title_chaser(candidate)
-    flag_langchain = compute_flag_langchain_dabbler(skills)
-    flag_cv = compute_flag_cv_specialist(skills)
-    flag_title_desc = compute_flag_title_desc_mismatch(candidate)
-    flag_template = compute_flag_template_desc(candidate)
+    if precomputed_static is not None:
+        yoe = float(precomputed_static.get("yoe", 0.0))
+        hard_req = hard_req_coverage_score(candidate, jd_config)
+        cons = consistency_score(
+            candidate,
+            bm25_score=bm25_score,
+            median_bm25=stage1_bm25_median,
+        )
+        param_a = float(precomputed_static.get("Param_A_Systems_Depth", 0.0))
+        param_b = float(precomputed_static.get("Param_B_Availability", 0.0))
+        param_c = float(precomputed_static.get("Param_C_Tenure", 0.0))
+        param_d = float(precomputed_static.get("Param_D_Notice_Exp", 0.0))
+        param_e = float(precomputed_static.get("Param_E_Credibility", 0.0))
+        param_f = float(precomputed_static.get("Param_F_Consulting", 0.0))
+        param_g = float(precomputed_static.get("Param_G_Location", 0.0))
+        param_h = float(precomputed_static.get("Param_H_GitHub", 0.0))
+        title_ai_frac = float(precomputed_static.get("title_ai_fraction", 0.0))
+        prod_sig_log = float(precomputed_static.get("prod_signal_log", 0.0))
+        flag_consulting_only = float(precomputed_static.get("flag_consulting_only", 0.0))
+        flag_title_chaser = float(precomputed_static.get("flag_title_chaser", 0.0))
+        flag_langchain = float(precomputed_static.get("flag_langchain_dabbler", 0.0))
+        flag_cv = float(precomputed_static.get("flag_cv_specialist", 0.0))
+        flag_title_desc = float(precomputed_static.get("flag_title_desc_mismatch", 0.0))
+        flag_template = float(precomputed_static.get("flag_template_desc", 0.0))
+        interaction_yoe_x_prod = float(precomputed_static.get("interaction_yoe_x_prod", 0.0))
+    else:
+        yoe = compute_yoe(candidate)
+        hard_req = hard_req_coverage_score(candidate, jd_config)
+        cons = consistency_score(
+            candidate,
+            bm25_score=bm25_score,
+            median_bm25=stage1_bm25_median,
+        )
+        param_a = compute_param_a_systems_depth(candidate)
+        param_b = compute_param_b_availability(candidate)
+        param_c = compute_param_c_tenure(candidate)
+        param_d = compute_param_d_notice_exp(candidate)
+        param_e = compute_param_e_credibility(candidate)
+        param_f = compute_param_f_consulting(candidate)
+        param_g = compute_param_g_location(candidate)
+        param_h = compute_param_h_github(candidate)
+        title_ai_frac = compute_title_ai_fraction(candidate)
+        prod_sig_log = compute_prod_signal_log(candidate)
+        flag_consulting_only = compute_flag_consulting_only(candidate)
+        flag_title_chaser = compute_flag_title_chaser(candidate)
+        flag_langchain = compute_flag_langchain_dabbler(skills)
+        flag_cv = compute_flag_cv_specialist(skills)
+        flag_title_desc = compute_flag_title_desc_mismatch(candidate)
+        flag_template = compute_flag_template_desc(candidate)
+        interaction_yoe_x_prod = yoe * max(0.0, prod_sig_log)
 
     interaction_req_x_cons = hard_req * cons
-    interaction_yoe_x_prod = yoe * max(0.0, prod_sig_log)
 
     # -----------------------------------------------------------------------
     # Assemble exactly the 22-feature vector from Section 4.2
@@ -1057,9 +1082,9 @@ def c5_engagement_mismatch(
     """
     Consistency Check 5: Engagement Mismatch (Data-Adaptive).
     Flag if bm25_score > median(stage1_scores)
-    AND connection_count == 0
-    AND search_appearance_30d == 0
-    AND endorsements_received == 0.
+    AND connection_count <= 60
+    AND search_appearance_30d <= 15
+    AND endorsements_received <= 4.
 
     Schema fields read:
       - redrob_signals.connection_count
@@ -1080,10 +1105,10 @@ def c5_engagement_mismatch(
         return 1.0
 
     is_high_bm25 = bm25_score > median_bm25
-    is_zero_engagement = (connections == 0 and appearances == 0 and endorsements == 0)
+    is_suspicious_engagement = (connections <= 60 and appearances <= 15 and endorsements <= 4)
 
-    if is_high_bm25 and is_zero_engagement:
-        return 0.0  # Suspicious: high keyword match but zero real engagement
+    if is_high_bm25 and is_suspicious_engagement:
+        return 0.0  # Suspicious: high keyword match but low real engagement
 
     return 1.0
 

@@ -473,6 +473,98 @@ def save_artifacts(
     logger.info("Weak labels saved: %s", labels_path)
 
 
+def compute_and_save_static_features(
+    candidates_path: str,
+    candidate_ids: List[str],
+    precomputed_dir: str,
+) -> None:
+    """
+    Compute 18 JD-independent features for all candidate profiles and save them to static_features.pkl.
+    """
+    from features import (
+        compute_yoe, compute_param_a_systems_depth, compute_param_b_availability,
+        compute_param_c_tenure, compute_param_d_notice_exp, compute_param_e_credibility,
+        compute_param_f_consulting, compute_param_g_location, compute_param_h_github,
+        compute_title_ai_fraction, compute_prod_signal_log, compute_flag_consulting_only,
+        compute_flag_title_chaser, compute_flag_langchain_dabbler, compute_flag_cv_specialist,
+        compute_flag_title_desc_mismatch, compute_flag_template_desc
+    )
+
+    logger.info("Computing 18 JD-independent features for all candidates offline...")
+    t0 = time.time()
+
+    candidate_ids_set = set(candidate_ids)
+    static_features = {}
+
+    with open(candidates_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                candidate = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            cid = candidate.get("candidate_id")
+            if not cid or cid not in candidate_ids_set:
+                continue
+
+            # Compute features
+            yoe = compute_yoe(candidate)
+            param_a = compute_param_a_systems_depth(candidate)
+            param_b = compute_param_b_availability(candidate)
+            param_c = compute_param_c_tenure(candidate)
+            param_d = compute_param_d_notice_exp(candidate)
+            param_e = compute_param_e_credibility(candidate)
+            param_f = compute_param_f_consulting(candidate)
+            param_g = compute_param_g_location(candidate)
+            param_h = compute_param_h_github(candidate)
+            title_ai_frac = compute_title_ai_fraction(candidate)
+            prod_sig_log = compute_prod_signal_log(candidate)
+
+            flag_consulting_only = compute_flag_consulting_only(candidate)
+            flag_title_chaser = compute_flag_title_chaser(candidate)
+            flag_langchain = compute_flag_langchain_dabbler(candidate.get("skills") or [])
+            flag_cv = compute_flag_cv_specialist(candidate.get("skills") or [])
+            flag_title_desc = compute_flag_title_desc_mismatch(candidate)
+            flag_template = compute_flag_template_desc(candidate)
+
+            interaction_yoe_x_prod = yoe * max(0.0, prod_sig_log)
+
+            static_features[cid] = {
+                "yoe": float(yoe),
+                "Param_A_Systems_Depth": float(param_a),
+                "Param_B_Availability": float(param_b),
+                "Param_C_Tenure": float(param_c),
+                "Param_D_Notice_Exp": float(param_d),
+                "Param_E_Credibility": float(param_e),
+                "Param_F_Consulting": float(param_f),
+                "Param_G_Location": float(param_g),
+                "Param_H_GitHub": float(param_h),
+                "title_ai_fraction": float(title_ai_frac),
+                "prod_signal_log": float(prod_sig_log),
+                "flag_consulting_only": float(flag_consulting_only),
+                "flag_title_chaser": float(flag_title_chaser),
+                "flag_langchain_dabbler": float(flag_langchain),
+                "flag_cv_specialist": float(flag_cv),
+                "flag_title_desc_mismatch": float(flag_title_desc),
+                "flag_template_desc": float(flag_template),
+                "interaction_yoe_x_prod": float(interaction_yoe_x_prod),
+            }
+
+            if len(static_features) % 25000 == 0:
+                logger.info("  Static features: %d calculated...", len(static_features))
+
+    out_path = os.path.join(precomputed_dir, "static_features.pkl")
+    with open(out_path, "wb") as f:
+        pickle.dump(static_features, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    elapsed = time.time() - t0
+    logger.info("Saved static features: %s (%d candidate profiles in %.1fs)",
+                out_path, len(static_features), elapsed)
+
+
 def main(candidates_path: str, base_dir: str) -> None:
     """Main precomputation pipeline."""
     precomputed_dir = os.path.join(base_dir, "precomputed")
@@ -518,6 +610,9 @@ def main(candidates_path: str, base_dir: str) -> None:
 
     # Step 4: Save BM25 index + metadata
     save_artifacts(precomputed_dir, bm25, candidate_ids, weak_labels)
+
+    # Step 4b: Compute and save 18 static features offline
+    compute_and_save_static_features(candidates_path, candidate_ids, precomputed_dir)
 
     # Step 5: Extract 22-feature matrix for training
     X, ordered_ids = extract_training_features(

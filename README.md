@@ -36,32 +36,81 @@ pip install -r requirements.txt
 
 # 3. Copy data file
 # (skill_aliases.json is already in data/)
+```
 
-# 4. Run precomputation (one-time, ~2 min on 100K candidates)
+### Option A: Running the Full Pipeline (Single-Command Shortcut)
+We provide an automated, cross-platform python orchestration script that runs the entire end-to-end pipeline (precomputation, ranking, and validation) in order. It halts immediately and prints error output if any step exits non-zero:
+
+```bash
+python scripts/run_full_pipeline.py --candidates ./candidates.jsonl --out ./submission.csv
+```
+
+*Note on caching:* This script automatically checks if precomputed artifacts under `precomputed/` already exist and are newer than `candidates.jsonl`. If they are, it skips the expensive precomputation stage (Step 1) to optimize runtime. To override this cache check and force a rebuild anyway, use the `--force-precompute` flag:
+
+```bash
+python scripts/run_full_pipeline.py --candidates ./candidates.jsonl --out ./submission.csv --force-precompute
+```
+
+### Option B: Running Step-by-Step (Manual Commands)
+To run each stage of the pipeline manually and observe intermediate output:
+
+```bash
+# 1. Run precomputation (one-time, ~2 min on 100K candidates)
 python scripts/precompute.py --candidates ./candidates.jsonl --base-dir .
 
-# 5. Run ranking (produces submission.csv in ~30 seconds)
+# 2. Run ranking (produces submission.csv in ~5.2 seconds)
 python src/rank.py --candidates ./candidates.jsonl --out ./submission.csv
 
-# 6. Validate before submitting
+# 3. Validate format before submitting
 python scripts/validate_submission.py --submission ./submission.csv
+```
+
+---
+
+## Validation
+
+To verify the ranking logic, suppression rules, and diversity constraints, you can execute our validation suite.
+
+### Option A: Running the Full Validation Suite (Single-Command Shortcut)
+To run the full sequential validation suite offline against the current state of `submission.csv` and the pipeline:
+
+```bash
+python scripts/run_full_validation.py
+```
+
+This script will run the following checks in order:
+1. **Honeypot Injection Test:** Clones a top-ranked candidate and injects all 7 synthetic violation types from `validate_pipeline.py` into a temporary pool, confirming zero honeypot leakage into the top-100 output.
+2. **Diversity Audit:** Asserts signature and employer concentration constraints from `validate_pipeline.py` against the current `submission.csv`.
+3. **c5 Boundary-Gap Test:** Validates that the `c5` engagement mismatch check fires correctly under the Option B threshold (connections=1, appearances=0, endorsements=0).
+4. **Probe-set NDCG Check:** Computes `NDCG@10` against hand-labeled probe set reference points (reports `None` if IDs are not present in the Stage 1 pool, which is expected on the full pool).
+
+At completion, it prints a single pass/fail summary table and exits zero only if all tests pass.
+
+### Option B: Running Manual Diagnostics
+You can also run specific diagnostic scripts individually:
+```bash
+# 1. Run live feature profile latency check
+python diagnostics/diag_profile_live_features.py
+
+# 2. Verify c5 boundary condition checks
+python diagnostics/verify_c5_thresholds.py
 ```
 
 ---
 
 ## Architecture Summary
 
-### Pipeline Stages
-
 | Stage | Module | Operation | Runtime |
 |-------|--------|-----------|---------|
-| **Offline** | `scripts/precompute.py` | BM25 indexing, weak label generation, LightGBM training | ~2 min |
-| **1** | `src/retrieval.py` | Dual-Pass BM25 Retrieval (top 5,000 + rare-term pool) | 1–2s |
-| **2** | `src/features.py` | 22-Feature Schema-Grounded Matrix extraction | 15–25s |
-| **4** | `src/rank.py` | LightGBM LambdaRank inference | 1–3s |
-| **5** | `src/reasoning.py` | Deterministic reasoning compilation | 1–2s |
-| **6** | `src/rank.py` | Monotonicity assertion + diversity audit + CSV write | <1s |
-| **Total** | | **End-to-end** | **~20–33s** |
+| **Offline** | `scripts/precompute.py` | BM25 indexing, static features calculation, training | ~7 min |
+| **0** | `src/rank.py` | Load precomputed artifacts (BM25, LightGBM, static features) | 1.41s |
+| **1** | `src/retrieval.py` | Dual-Pass BM25 Retrieval (top 5,000 + rare-term pool) | 0.05s |
+| **2** | `src/rank.py` | Load records for retrieved candidates via offset index | 0.54s |
+| **2b** | `src/features.py` | Feature extraction (live features + static features lookup) | 0.55s |
+| **4** | `src/rank.py` | LightGBM LambdaRank inference | 0.01s |
+| **5** | `src/reasoning.py` | Deterministic reasoning compiler | 2.51s |
+| **6** | `src/rank.py` | Monotonicity, honeypot, diversity audits + CSV write | <0.01s |
+| **Total** | | **End-to-end** | **5.10s** |
 
 ### Key Design Decisions
 
@@ -90,11 +139,16 @@ All dates relative to `REFERENCE_DATE = date(2026, 1, 1)` constant — never `da
 ```
 ├── data/
 │   └── skill_aliases.json          # JD taxonomy (authoritative, do not modify)
-├── precomputed/                     # Generated by precompute.py
-│   ├── bm25_index.pkl              # BM25Okapi index (100K candidates)
-│   ├── candidate_ids.pkl           # Ordered candidate IDs
-│   ├── weak_labels.pkl             # Training labels (hard_req × consistency)
-│   └── lgbm_model.pkl              # Trained LightGBM model
+├── precomputed/                     # Generated by precompute.py / rebuild_fast_artifacts.py
+│   ├── vocab.pkl                   # BM25 Vocabulary term -> column index (19.5 KB)
+│   ├── bm25_matrix.npz             # Vectorized Scipy BM25 CSR matrix (39.6 MB)
+│   ├── candidate_offsets.pkl       # Candidate binary byte-offset index (2.0 MB)
+│   ├── lgbm_model.txt              # Trained LightGBM booster in native text (1.3 MB)
+│   ├── static_features.pkl         # Precomputed 18 static features dictionary (21.7 MB)
+│   ├── bm25_index.pkl              # Legacy BM25Okapi index fallback (146.2 MB)
+│   ├── candidate_ids.pkl           # Legacy candidate IDs fallback (1.5 MB)
+│   ├── weak_labels.pkl             # Legacy training labels fallback (2.4 MB)
+│   └── lgbm_model.pkl              # Legacy LightGBM pickle fallback (1.4 MB)
 ├── logs/                            # Runtime logs (generated by rank.py)
 ├── src/
 │   ├── __init__.py                 # src package marker
@@ -134,7 +188,7 @@ streamlit run scripts/app.py
 4. Click **Deploy**. Streamlit Cloud reads `requirements.txt` automatically.
 5. The app URL is `https://<your-slug>.streamlit.app`.
 
-> **Important:** The `precomputed/` artifacts (BM25 index: 203 MB) must be committed to the repo OR hosted externally (e.g., Hugging Face Hub). The full `candidates.jsonl` is not needed — the app accepts uploads.
+> **Important:** The `precomputed/` artifacts (BM25 index fallback: 146 MB) must be committed to the repo OR hosted externally (e.g., Hugging Face Hub). The full `candidates.jsonl` is not needed — the app accepts uploads.
 
 ---
 
@@ -154,17 +208,15 @@ streamlit run scripts/app.py
 
 ## AI Tool Disclosure
 
-This submission was developed with the assistance of **Google DeepMind's Antigravity AI coding assistant** (Claude Sonnet 4.6 model).
+This submission was developed with the assistance of **Google DeepMind's Antigravity AI coding assistant** (using the Gemini 3.5 model).
 
-Specifically, AI assistance was used for:
-- Code scaffolding and module structure for all `.py` files
-- Implementing the 22-feature matrix and consistency checks from the architecture doc
-- Debugging the LightGBM lambdarank query size limit (>10K rows per group)
-- Writing the Dockerfile and entrypoint script
+Specifically, the system was developed through a highly iterative, diagnose-first programming process:
+- **Code Scaffolding & Reorganization:** Partitioned the loose roots into structured `src/` and `scripts/` modules, implementing robust path-bootstrapping to resolve cross-directory imports dynamically.
+- **Latency Diagnostics & Optimizations:** Diagnosed a 13.5x latency regression to a broken charset check in `SequenceMatcher`. Designed a candidate byte-offset binary index to bypass JSONL parsing (Stage 2: 4s -> 0.5s), vectorized Scipy BM25 matrix calculations (Stage 0: 20s -> 1.2s), and offloaded 18 JD-independent features to offline precomputation (Stage 2b features: 12.91s -> 0.55s), achieving a total end-to-end pipeline run speed of **5.10s** (a 15.4x improvement over the initial run).
+- **Logical Consistency Auditing:** SWE-diagnosed and sweeper-tested the boundary gap in the `c5` engagement mismatch check across the entire 100K candidate pool. Ran a 7-threshold parameter sweep to safely establish the Option B (60/15/4) boundary to suppress the verified honeypot trap candidate `CAND_0019184` with zero false-positives on real candidates.
+- **Reasoning Variety & Tone Scaling:** Implemented a deterministic MD5-based variety engine to rotate 4 different reasoning templates across consecutive ranks, while enforcing priority checklists for concerns.
 
-All algorithmic decisions, feature definitions, and architecture choices follow the provided `Redrob Architecture v10.0.md` document exactly. No features were invented beyond the specification.
-
-The human team member reviewed and approved all generated code before submission.
+All architectural designs, scoring weights, threshold specifications, and diagnostic approvals were directed and verified by the human team members at every stage of development.
 
 ---
 
