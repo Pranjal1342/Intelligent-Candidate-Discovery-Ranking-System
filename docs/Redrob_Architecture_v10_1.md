@@ -17,19 +17,24 @@ To maximize NDCG@10 and P@5, this architecture discards high-risk neural network
 
 The repository is strictly partitioned into offline pre-computation modules and online runtime modules required by the spec.
 
-**Offline Pre-Computation:**
+**Core Source Modules (`src/`):**
 
-* **jd\_parser.py**: Extracts JD logic.  
-* **precompute.py**: Builds BM25 index artifact, generates weak labels, trains LightGBM, and saves binaries to precomputed/.
+* **src/jd\_parser.py**: Extracts JD logic.
+* **src/retrieval.py**: Executes Dual-Pass BM25 retrieval.  
+* **src/features.py**: Contains explicitly defined mathematical parameters and the 22-feature vector.  
+* **src/reasoning.py**: The ReasoningCompiler handling deterministic text generation.  
+* **src/rank.py**: Single entry point (python src/rank.py \--candidates ./candidates.jsonl \--out ./submission.csv).  
 
-**Online Runtime Modules:**
+**Helper & Script Modules (`scripts/`):**
 
-* **rank.py**: Single entry point (python rank.py \--candidates ./candidates.jsonl \--out ./submission.csv).  
-* **features.py**: Contains explicitly defined mathematical parameters and the 22-feature vector.  
-* **retrieval.py**: Executes Dual-Pass BM25 retrieval.  
-* **reasoning.py**: The ReasoningCompiler handling deterministic text generation.  
-* **app.py**: Streamlit sandbox application for Stage 1 compliance.  
-* **validate\_submission.py**: Local execution of the official Redrob validator.  
+* **scripts/precompute.py**: Builds BM25 index artifact, generates weak labels, trains LightGBM, and saves binaries to precomputed/.
+* **scripts/app.py**: Streamlit sandbox application for Stage 1 compliance.  
+* **scripts/validate\_submission.py**: Local execution of the official Redrob validator.  
+* **scripts/validate\_pipeline.py**: Provided validation protocol script.
+* **scripts/rebuild\_fast\_artifacts.py**: Quick rebuild utility.
+
+**Configuration & Docs (Root):**
+
 * **requirements.txt**: Dependency pinning.  
 * **submission\_metadata.yaml**: Portal metadata declarations.  
 * **README.md**: Reproduction instructions.
