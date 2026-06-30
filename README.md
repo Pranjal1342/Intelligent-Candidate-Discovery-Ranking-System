@@ -22,26 +22,32 @@ A ranking system built purely on heuristic scoring rules tends to reward whateve
 The pipeline is split into two phases. The offline phase has no time limit and produces a set of precomputed artifacts. The online phase is what actually runs during the competition's 300 second window, and only touches those artifacts plus the live candidate pool.
 
 ```mermaid
-    flowchart TD
-    candidates_jsonl["candidates.jsonl<br/>(100,000 records)"]
-    submission_csv["submission.csv<br/>(100 ranked candidates)"]
+ flowchart TD
+    %% Define classes with light pastel fills, complementary borders, and dark text for contrast
+    classDef data fill:#e0f2fe,stroke:#0284c7,stroke-width:1px,color:#0f172a;
+    classDef llm fill:#f3e8ff,stroke:#7e22ce,stroke-width:1px,color:#0f172a;
+    classDef offline fill:#ffedd5,stroke:#c2410c,stroke-width:1px,color:#0f172a;
+    classDef online fill:#dcfce7,stroke:#15803d,stroke-width:1px,color:#0f172a;
+
+    candidates_jsonl["candidates.jsonl<br/>(100,000 records)"]:::data
+    submission_csv["submission.csv<br/>(100 ranked candidates)"]:::data
 
     subgraph offline_phase [OFFLINE PHASE]
         subgraph gemma3_annotation [GEMMA3 PAIRWISE ANNOTATION]
-            stratified_sample["Stratified Sample of<br/>500 Candidates"]
-            pairwise_comparisons["2,500 Pairwise Comparisons<br/>(Local Gemma3 LLM)"]
-            elo_ratings["Laplace-smoothed<br/>Elo Ratings"]
-            relevance_labels["Quartile Thresholding to<br/>Relevance Labels 0-3"]
+            stratified_sample["Stratified Sample of<br/>500 Candidates"]:::llm
+            pairwise_comparisons["2,500 Pairwise Comparisons<br/>(Local Gemma3 LLM)"]:::llm
+            elo_ratings["Laplace-smoothed<br/>Elo Ratings"]:::llm
+            relevance_labels["Quartile Thresholding to<br/>Relevance Labels 0-3"]:::llm
             
             stratified_sample --> pairwise_comparisons
             pairwise_comparisons --> elo_ratings
             elo_ratings --> relevance_labels
         end
         
-        bm25_index_build["BM25 Index Build<br/>(NumPy CSR matrix)"]
-        static_feature_precompute["Static Feature Precompute<br/>(18 JD-independent features)"]
+        bm25_index_build["BM25 Index Build<br/>(NumPy CSR matrix)"]:::offline
+        static_feature_precompute["Static Feature Precompute<br/>(18 JD-independent features)"]:::offline
         
-        lightgbm_training["LIGHTGBM TRAINING<br/>Objective: lambdarank<br/>early stop on NDCG@5"]
+        lightgbm_training["LIGHTGBM TRAINING<br/>Objective: lambdarank<br/>early stop on NDCG@5"]:::offline
         
         bm25_index_build --> precomputed_artifacts_box
         static_feature_precompute --> precomputed_artifacts_box
@@ -51,23 +57,23 @@ The pipeline is split into two phases. The offline phase has no time limit and p
         
         lightgbm_training --> precomputed_artifacts_box
         
-        precomputed_artifacts_box["PRECOMPUTED ARTIFACTS<br/>lgbm_model.txt<br/>bm25_matrix.npz<br/>static_features.pkl"]
+        precomputed_artifacts_box["PRECOMPUTED ARTIFACTS<br/>lgbm_model.txt<br/>bm25_matrix.npz<br/>static_features.pkl"]:::data
     end
     
     subgraph online_ranking_phase [ONLINE RANKING PHASE]
-        stage_0["Stage 0: Load Precomputed Artifacts<br/>(BM25, LightGBM, static features)"]
+        stage_0["Stage 0: Load Precomputed Artifacts<br/>(BM25, LightGBM, static features)"]:::online
         
-        stage_1["Stage 1: Dual-pass BM25 Retrieval<br/>Pass A: JD skills on skills array<br/>Pass B: production keywords on career descriptions<br/>Narrow to ~8,500 candidates"]
+        stage_1["Stage 1: Dual-pass BM25 Retrieval<br/>Pass A: JD skills on skills array<br/>Pass B: production keywords on career descriptions<br/>Narrow to ~8,500 candidates"]:::online
         
-        stage_2["Stage 2: Load Stage 1 Records<br/>(Byte-offset index, O(1))"]
+        stage_2["Stage 2: Load Stage 1 Records<br/>(Byte-offset index, O(1))"]:::online
         
-        stage_2b["Stage 2b: Feature Engineering<br/>(22 features, adversarial detection,<br/>consistency score)"]
+        stage_2b["Stage 2b: Feature Engineering<br/>(22 features, adversarial detection,<br/>consistency score)"]:::online
         
-        stage_4["Stage 4: LightGBM Inference<br/>(final_score = raw_score * consistency_score)"]
+        stage_4["Stage 4: LightGBM Inference<br/>(final_score = raw_score * consistency_score)"]:::online
         
-        stage_5["Stage 5: Reasoning Compiler<br/>(Deterministic grammar, 4 templates,<br/>priority concerns, numeric audit)"]
+        stage_5["Stage 5: Reasoning Compiler<br/>(Deterministic grammar, 4 templates,<br/>priority concerns, numeric audit)"]:::online
         
-        stage_6["Stage 6: Blocking Audits + CSV Write<br/>(Honeypot, diversity, monotonicity checks)"]
+        stage_6["Stage 6: Blocking Audits + CSV Write<br/>(Honeypot, diversity, monotonicity checks)"]:::online
         
         stage_0 --> stage_1
         stage_1 --> stage_2
@@ -89,10 +95,9 @@ The pipeline is split into two phases. The offline phase has no time limit and p
     %% Use transparent fills (none) so it inherits GitHub's native dark/light themes seamlessly
     style offline_phase fill:none,stroke:#777,stroke-width:2px,stroke-dasharray: 5 5
     style online_ranking_phase fill:none,stroke:#777,stroke-width:2px,stroke-dasharray: 5 5
-    style gemma3_annotation fill:none,stroke:#555,stroke-width:1px
-```    
-  
-        
+    style gemma3_annotation fill:none,stroke:#555,stroke-width:1px   
+
+```        
 ---
 
 ## Quick Start
