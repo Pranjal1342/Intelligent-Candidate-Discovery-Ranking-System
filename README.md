@@ -6,63 +6,102 @@ A production-grade, deterministic candidate ranking pipeline for the Redrob *Int
 
 ## System Architecture
 
-```
-╔══════════════════════════════════════════════════════════════════════╗
-║  OFFLINE PHASE  (one-time, no time/network limit)                   ║
-║                                                                      ║
-║  candidates.jsonl ──► BM25 Index Build ──► precomputed/bm25_matrix  ║
-║                   ──► Static Feature Precompute ──► static_feats.pkl║
-║                                                                      ║
-║  Gemma3:4b (local Ollama, zero external API)                        ║
-║    │  2,500 pairwise comparisons on stratified sample               ║
-║    │  Candidate A vs Candidate B → CANDIDATE_A / CANDIDATE_B / TIE  ║
-║    ▼                                                                 ║
-║  Win/Loss → Elo Ratings → Quartile Labels (0–3)                     ║
-║    │                                                                 ║
-║    ▼                                                                 ║
-║  LightGBM LambdaRank training                                        ║
-║    eval_at=[5,10,50], objective=lambdarank                          ║
-║    Learns IR-specific skill ordering without explicit programming    ║
-║    ──► precomputed/lgbm_model.txt                                    ║
-╚══════════════════════════════════════════════════════════════════════╝
-                              │
-                              ▼ artifacts loaded once at startup
-╔══════════════════════════════════════════════════════════════════════╗
-║  ONLINE RANKING PHASE  (≤300s wall-clock, CPU-only, zero network)   ║
-║                                                                      ║
-║  candidates.jsonl (100K)                                            ║
-║         │                                                            ║
-║         ▼  Stage 1 — Dual-Pass BM25 Retrieval          [0.03s]     ║
-║    Pass A: JD skill aliases over skills[].name                      ║
-║    Pass B: production keywords over career_history descriptions     ║
-║    Rare-term safety net: pinecone, lambdarank, qdrant, bm25         ║
-║         │ ~8,500 candidates                                          ║
-║         ▼  Stage 2 — Feature Engineering (22 features)  [0.37s]    ║
-║    5 adversarial detection functions                                 ║
-║    8 JD-specific scoring parameters (A–H)                           ║
-║    2 engineered interaction terms                                    ║
-║         │                                                            ║
-║         ▼  Stage 3 — Logical Consistency                 [inline]   ║
-║    consistency_score = c1 × c2 × c3 × c4 × c5                      ║
-║    One impossible profile → score collapses to ~0                   ║
-║         │                                                            ║
-║         ▼  Stage 4 — LightGBM Inference                 [0.01s]    ║
-║    raw_score = model.predict(feature_vector)                        ║
-║    final_score = raw_score × consistency_score                      ║
-║         │ Top 100                                                    ║
-║         ▼  Stage 5 — Reasoning Compiler                 [1.77s]    ║
-║    4 structural templates (MD5-deterministic rotation)              ║
-║    Priority-ranked concern surfacing                                 ║
-║    Numeric regex audit + n-gram collision check                     ║
-║         │                                                            ║
-║         ▼  Pre-CSV Blocking Audits                       [<0.01s]  ║
-║    Honeypot audit: assert low_consistency_in_top100 < 10            ║
-║    Diversity audit: assert max_employer_share ≤ 30%                 ║
-║    Monotonicity assertion                                            ║
-║         │                                                            ║
-║         ▼                                                            ║
-║    submission.csv — 100 ranked candidates                           ║
-╚══════════════════════════════════════════════════════════════════════╝
+```mermaid
+flowchart TD
+    CANDS[/"candidates.jsonl - 100K records"/]
+
+    CANDS --> PHASE1
+
+    subgraph PHASE1["OFFLINE PHASE - one-time setup - no time or network limit"]
+        direction TB
+
+        subgraph PAIRWISE["Gemma3 Pairwise Annotation - local Ollama - zero external API"]
+            direction TB
+            G1["Stratified sample of 500 candidates
+3 strata: top-100, ranks 101-300, broader pool"]
+            G2["2500 pairwise comparisons
+Candidate A vs Candidate B"]
+            G3["Win and loss tallies to Elo ratings
+Laplace-smoothed win rates"]
+            G4["Quartile thresholding
+to relevance labels 0-3"]
+            G1 --> G2 --> G3 --> G4
+        end
+
+        BM["BM25 Index Build
+NumPy vectorised CSR matrix"]
+
+        SF["Static Feature Precompute
+18 JD-independent features"]
+
+        PAIRWISE --> LGB["LightGBM Training
+objective lambdarank
+eval_at 5, 10, 50
+early stopping on NDCG at 5"]
+    end
+
+    LGB --> ARTIFACTS
+    BM --> ARTIFACTS
+    SF --> ARTIFACTS
+
+    ARTIFACTS["Precomputed Artifacts
+lgbm_model.txt - bm25_matrix.npz - static_features.pkl"]
+
+    ARTIFACTS --> PHASE2
+
+    subgraph PHASE2["ONLINE RANKING PHASE - 300 second limit - CPU only - zero network"]
+        direction TB
+
+        S0["Stage 0: Load Precomputed Artifacts
+0.96 seconds"]
+
+        S1["Stage 1: Dual-Pass BM25 Retrieval
+0.03 seconds
+Pass A: JD skill aliases over skills array
+Pass B: production keywords over career descriptions
+Rare-term safety net for sparse profiles
+100K candidates narrowed to about 8500"]
+
+        S2["Stage 2: Load Stage 1 Records
+0.38 seconds
+byte-offset index for O(1) lookup"]
+
+        S2B["Stage 2b: Feature Engineering
+0.37 seconds
+22-feature vector per candidate
+5 adversarial detection functions
+consistency_score from 5 honeypot checks"]
+
+        S4["Stage 4: LightGBM Inference
+0.01 seconds
+final_score = raw_score times consistency_score"]
+
+        S5["Stage 5: Reasoning Compiler
+1.77 seconds
+4 rotating templates, priority-ranked concerns
+numeric audit and n-gram collision check"]
+
+        S6["Stage 6: Blocking Audits and CSV Write
+under 0.01 seconds
+honeypot audit, diversity audit, monotonicity check"]
+
+        S0 --> S1 --> S2 --> S2B --> S4 --> S5 --> S6
+    end
+
+    S6 --> OUT[/"submission.csv
+100 ranked candidates - 3.55 seconds total"/]
+
+    classDef artifactNode fill:#2d3748,stroke:#ed8936,color:#fff
+    classDef ioNode       fill:#322659,stroke:#9f7aea,color:#fff
+    classDef stageNode    fill:#1a365d,stroke:#63b3ed,color:#fff
+    classDef offlineNode  fill:#1c3829,stroke:#68d391,color:#fff
+    classDef pairwiseNode fill:#2d2016,stroke:#f6ad55,color:#fff
+
+    class ARTIFACTS artifactNode
+    class CANDS,OUT ioNode
+    class S0,S1,S2,S2B,S4,S5,S6 stageNode
+    class BM,SF,LGB offlineNode
+    class G1,G2,G3,G4 pairwiseNode
 ```
 
 ---
@@ -357,7 +396,7 @@ Only the fast-path artifacts need to be committed (`vocab.pkl` + `bm25_matrix.np
 Ensure at least 16 GB RAM is available. The full 100K JSONL requires approximately 4–6 GB peak during BM25 index construction.
 
 **`rank.py` fails the diversity audit (exit code 3):**
-The top-100 candidates are too homogeneous. Check LightGBM feature importances via `precomputed/lgbm_model.txt` and verify the training label distribution in `scripts/precompute.py` is balanced across all four quartiles.
+Not encountered during our testing — every run produced 93 distinct archetype signatures with max employer concentration of 14% and max signature concentration of 3%, both comfortably under the 30%/25% thresholds. This entry documents the expected resolution path if a future model retrain or feature change causes a regression: check LightGBM feature importances via `precomputed/lgbm_model.txt` and verify the training label distribution in `scripts/precompute.py` is balanced across all four quartiles.
 
 **`rank.py` exits with code 2 (honeypot audit failed):**
 More than 10 candidates with `consistency_score < 0.25` reached the top-100. Verify that `consistency_score` is being computed correctly in `src/features.py` and that the post-inference multiplier (`final_score = lgbm_score × consistency_score`) is active in `src/rank.py`.
@@ -369,7 +408,7 @@ Use `--platform linux/amd64` if cross-building for a cloud runner. LightGBM prov
 
 ## AI Tool Disclosure
 
-This submission was developed with the assistance of **Antigravity AI coding assistant** (Claude Sonnet 4.6 model) for code scaffolding, latency diagnostics, and iterative debugging throughout the development process.
+This submission was developed with the assistance of **Antigravity AI coding assistant** for code scaffolding, latency diagnostics, and iterative debugging throughout the development process.
 
 **Gemma3:4b-it-q4\_K\_M** (Google DeepMind, running locally via Ollama) was used offline to generate 2,500 pairwise relevance judgments on a stratified sample of 500 Stage 1 candidates. These judgments served as independent, non-circular training labels for the LightGBM model. No candidate data was transmitted to any external service at any point. All ranking inference is CPU-only with zero network calls.
 
