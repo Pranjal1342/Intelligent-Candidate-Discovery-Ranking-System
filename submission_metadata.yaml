@@ -4,7 +4,7 @@ team:
   primary_contact_email: "pranjaldohare8@gmail.com"
   primary_contact_phone: "+919320480095"
   github_repository_url: "https://github.com/Pranjal1342/Intelligent-Candidate-Discovery-Ranking-System"
-  sandbox_demo_url: "https://redrob-ranker.streamlit.app/"
+  sandbox_demo_url: "https://ctrl-coffee-repeat.streamlit.app/"
   members:
     - name: "Pranjal H Dohare"
       role: "Lead Developer"
@@ -13,7 +13,7 @@ team:
 
 submission:
   version: "1.0.0"
-  timestamp: "2026-06-18"
+  timestamp: "2026-07-01"
   output_file: "submission.csv"
 
 system:
@@ -59,7 +59,7 @@ methodology_summary: |
   top-100 ranking — confirming the LLM labels are genuinely independent of the engineered features.
 
 ai_tools_used:
-  - tool: "Google DeepMind Antigravity (Claude Sonnet 4.6)"
+  - tool: "Google DeepMind Antigravity"
     usage: "Code scaffolding, module structure, latency diagnostics, iterative debugging"
     human_review: true
   - tool: "Gemma3:4b-it-q4_K_M via Ollama (local, offline)"
