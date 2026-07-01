@@ -1,0 +1,23 @@
+# Virtual environments & Git
+.venv/
+venv/
+ENV/
+env/
+.git/
+.vscode/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# OS & Logs
+*.log
+logs/
+reasoning_trace.jsonl
+
+# Large local datasets & output CSVs
+candidates.jsonl
+submission*.csv
+CTRL_COFFEE*.csv
+_tmp_*
+scratch/
+diagnostics/
