@@ -179,8 +179,8 @@ def main():
     )
     parser.add_argument(
         "--submission",
-        required=True,
-        help="Path to submission.csv to validate",
+        default="./CTRL_COFFEE_REPEAT.csv",
+        help="Path to CTRL_COFFEE_REPEAT.csv to validate",
     )
     args = parser.parse_args()
 

@@ -111,7 +111,7 @@ docker run --rm --network none \
   redrob-ranker
 ```
 
-Output: `./out/submission.csv`, 100 ranked candidates, validated and ready to submit.
+Output: `./out/CTRL_COFFEE_REPEAT.csv`, 100 ranked candidates, validated and ready to submit.
 
 ### Without Docker
 
@@ -127,16 +127,16 @@ pip install -r requirements.txt
 python scripts/precompute.py --candidates ./candidates.jsonl --base-dir .
 
 # 4. Run ranking (roughly 4 seconds)
-python src/rank.py --candidates ./candidates.jsonl --out ./submission.csv
+python src/rank.py --candidates ./candidates.jsonl --out ./CTRL_COFFEE_REPEAT.csv
 
 # 5. Validate output format
-python scripts/validate_submission.py --submission ./submission.csv
+python scripts/validate_submission.py --submission ./CTRL_COFFEE_REPEAT.csv
 ```
 
 **Single-command alternative** (handles artifact caching automatically):
 
 ```bash
-python scripts/run_full_pipeline.py --candidates ./candidates.jsonl --out ./submission.csv
+python scripts/run_full_pipeline.py --candidates ./candidates.jsonl --out ./CTRL_COFFEE_REPEAT.csv
 ```
 
 Add `--force-precompute` to bypass the cache and rebuild all artifacts from scratch.

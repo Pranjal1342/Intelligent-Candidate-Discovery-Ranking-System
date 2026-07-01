@@ -572,8 +572,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--out",
-        required=True,
-        help="Path for output submission.csv",
+        default="./CTRL_COFFEE_REPEAT.csv",
+        help="Path for output CTRL_COFFEE_REPEAT.csv",
     )
     parser.add_argument(
         "--base-dir",
