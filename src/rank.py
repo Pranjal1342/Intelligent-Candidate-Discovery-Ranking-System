@@ -315,25 +315,14 @@ def run_lightgbm_inference(
 # Monotonicity enforcement + tiebreaking
 # ---------------------------------------------------------------------------
 
-def sort_and_enforce_monotonicity(
-    lgbm_scores: Dict[str, float],
-    logger: logging.Logger,
-) -> List[Tuple[str, float, int]]:
+def _normalize_scores(top_100_raw: List[Tuple[str, float]], logger: logging.Logger) -> List[Tuple[str, float, int]]:
     """
-    Sort candidates by score descending. Break ties by ascending candidate_id.
-    Assign ranks 1..N.
-
-    Returns:
-        List of (candidate_id, score, rank) sorted by rank.
+    Apply min-max normalization to raw scores and assign ranks 1..N.
+    Returns: List of (candidate_id, score, rank) sorted by rank.
     """
-    # Sort: primary by score desc, secondary by candidate_id asc (deterministic tiebreak)
-    sorted_candidates = sorted(
-        lgbm_scores.items(),
-        key=lambda x: (-x[1], x[0]),
-    )
+    if not top_100_raw:
+        return []
 
-    # Normalize within top-100 only — not across full pool
-    top_100_raw = sorted_candidates[:100]
     top_scores = [s for _, s in top_100_raw]
     score_min = top_scores[-1]   # lowest of top 100
     score_max = top_scores[0]    # highest (rank 1)
@@ -358,6 +347,27 @@ def sort_and_enforce_monotonicity(
     logger.info("Top 100 selected: score range [%.6f, %.6f]",
                 result[-1][1], result[0][1])
     return result
+
+def sort_and_enforce_monotonicity(
+    lgbm_scores: Dict[str, float],
+    logger: logging.Logger,
+) -> List[Tuple[str, float, int]]:
+    """
+    Sort candidates by score descending. Break ties by ascending candidate_id.
+    Assign ranks 1..N.
+
+    Returns:
+        List of (candidate_id, score, rank) sorted by rank.
+    """
+    # Sort: primary by score desc, secondary by candidate_id asc (deterministic tiebreak)
+    sorted_candidates = sorted(
+        lgbm_scores.items(),
+        key=lambda x: (-x[1], x[0]),
+    )
+
+    # Normalize within top-100 only — not across full pool
+    top_100_raw = sorted_candidates[:100]
+    return _normalize_scores(top_100_raw, logger)
 
 
 def assert_monotonicity(ranked: List[Tuple[str, float, int]]) -> None:

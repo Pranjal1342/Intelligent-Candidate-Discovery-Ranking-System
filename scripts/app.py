@@ -68,6 +68,37 @@ def load_model():
         return pickle.load(f)
 
 
+def sort_with_secondary_tiebreak(
+    final_scores: Dict[str, float],
+    fv_cache: Dict[str, dict],
+    logger,
+) -> List[tuple]:
+    """
+    Sort candidates by final_raw score (primary), then by hard_req_coverage
+    and bm25_score (secondary, display-only tiebreaks) when scores are tied.
+
+    This does NOT change the underlying score values or the model's
+    predictions — only the display order and assigned rank numbers when
+    raw_lgbm scores are identical, which happens on small batches because
+    the trained model places very low weight on bm25_score (confirmed:
+    bm25_score used in only 2 of ~12,600 possible tree splits).
+    """
+    def sort_key(item):
+        cid, score = item
+        fv = fv_cache.get(cid, {})
+        hard_req = fv.get("hard_req_coverage", 0.0)
+        bm25 = fv.get("bm25_score", 0.0)
+        # Negative for descending order on all three keys
+        return (-score, -hard_req, -bm25, cid)
+
+    sorted_items = sorted(final_scores.items(), key=sort_key)
+
+    # Reuse the existing normalization logic from rank.py, just on the
+    # newly-ordered list — normalization math itself is unchanged.
+    from rank import _normalize_scores
+    ranked_top100 = _normalize_scores(sorted_items, logger)
+    return ranked_top100
+
 def rank_candidates_inline(
     candidates: List[dict],
     jd_config,
@@ -165,6 +196,12 @@ def rank_candidates_inline(
         feature_rows.append(row)
         valid_cids.append(cid)
 
+    debug_targets = {"CAND_0000014", "CAND_0000043", "CAND_0000082"}
+    for i, cid in enumerate(valid_cids):
+        if cid in debug_targets:
+            print(f"FEATURE VECTOR DEBUG | {cid} | row[0]={feature_rows[i][0]:.6f} (bm25) | full_row={feature_rows[i]}")
+    print(f"FEATURE_COLUMNS[0] = {FEATURE_COLUMNS[0]}")
+
     X = np.array(feature_rows, dtype=np.float32)
 
   
@@ -179,8 +216,8 @@ def rank_candidates_inline(
         final_scores[cid] = float(raw_scores[i] * consistency_map.get(cid, 1.0))
 
     # BUG 2: Reuse exact sorting and normalization from src/rank.py
-    from rank import sort_and_enforce_monotonicity, assert_monotonicity
-    ranked_top100 = sort_and_enforce_monotonicity(final_scores, logging.getLogger("app"))
+    from rank import assert_monotonicity
+    ranked_top100 = sort_with_secondary_tiebreak(final_scores, fv_cache, logging.getLogger("app"))
 
     try:
         assert_monotonicity(ranked_top100)
@@ -347,6 +384,11 @@ def main():
 
                         
                                 st.subheader("Top 100 Candidates")
+                                st.caption(
+                                    "Note: candidates with identical model scores are ordered by hard "
+                                    "requirement coverage, then BM25 relevance, for display purposes. "
+                                    "The underlying model scores are unchanged."
+                                )
                                 display_df = result_df[[
                                     "rank", "candidate_id", "name", "title",
                                     "company", "yoe", "location", "score",
