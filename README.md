@@ -2,9 +2,9 @@
 
 **A production grade, deterministic ranking pipeline for the Redrob Intelligent Candidate Discovery and Ranking Challenge.**
 
-Ranks 100,000 candidates against a structured Job Description in **3.55 seconds** on CPU, with zero external API calls during inference.
+Ranks 100,000 candidates against a structured Job Description in **4 seconds** on CPU, with zero external API calls during inference.
 
-![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white) ![Runtime](https://img.shields.io/badge/Runtime-3.55s%20%2F%20100K-blue) ![Network](https://img.shields.io/badge/Network-Zero%20Calls-green) ![Model](https://img.shields.io/badge/Ranker-LightGBM%20LambdaRank-orange) ![Labels](https://img.shields.io/badge/Labels-Gemma3%20Pairwise%20(Local)-purple) ![License](https://img.shields.io/badge/License-MIT-yellow)
+![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white) ![Runtime](https://img.shields.io/badge/Runtime-4.00s%20%2F%20100K-blue) ![Network](https://img.shields.io/badge/Network-Zero%20Calls-green) ![Model](https://img.shields.io/badge/Ranker-LightGBM%20LambdaRank-orange) ![Labels](https://img.shields.io/badge/Labels-Gemma3%20Pairwise%20(Local)-purple) ![License](https://img.shields.io/badge/License-MIT-yellow)
 
 [Architecture](#architecture) · [Quick Start](#quick-start) · [Runtime Performance](#runtime-performance) · [Pipeline Internals](#pipeline-internals) · [Model Comparison](#model-comparison-heuristic-vs-gemma-trained) · [Validation](#validation) · [Constraints](#runtime-constraints-all-enforced) · [File Structure](#file-structure)
 
@@ -126,7 +126,7 @@ pip install -r requirements.txt
 # 3. Run precomputation (one-time, roughly 7 minutes on 100K candidates)
 python scripts/precompute.py --candidates ./candidates.jsonl --base-dir .
 
-# 4. Run ranking (roughly 3.55 seconds)
+# 4. Run ranking (roughly 4 seconds)
 python src/rank.py --candidates ./candidates.jsonl --out ./submission.csv
 
 # 5. Validate output format
@@ -149,14 +149,14 @@ Add `--force-precompute` to bypass the cache and rebuild all artifacts from scra
 |---|---|---|---|
 | Offline | `experiments/pairwise_llm_check/` | Gemma3 pairwise annotation (2,500 pairs, local Ollama) | ~45 min |
 | Offline | `scripts/precompute.py` | BM25 indexing, static feature precomputation, LightGBM training | ~7 min |
-| Stage 0 | `src/rank.py` | Load precomputed artifacts (BM25, LightGBM, static features) | 0.96s |
-| Stage 1 | `src/retrieval.py` | Dual-pass BM25 retrieval (top 5,000 + rare-term safety net) | 0.03s |
-| Stage 2 | `src/rank.py` | Load Stage 1 candidate records via byte-offset index | 0.38s |
-| Stage 2b | `src/features.py` | Live feature extraction (22-feature matrix) | 0.37s |
-| Stage 4 | `src/rank.py` | LightGBM LambdaRank inference, consistency multiplier | 0.01s |
-| Stage 5 | `src/reasoning.py` | Deterministic reasoning compiler (top 100) | 1.77s |
+| Stage 0 | `src/rank.py` | Load precomputed artifacts (BM25, LightGBM, static features) | 1.10s |
+| Stage 1 | `src/retrieval.py` | Dual-pass BM25 retrieval (top 5,000 + rare-term safety net) | 0.05s |
+| Stage 2 | `src/rank.py` | Load Stage 1 candidate records via byte-offset index | 0.45s |
+| Stage 2b | `src/features.py` | Live feature extraction (22-feature matrix) | 0.45s |
+| Stage 4 | `src/rank.py` | LightGBM LambdaRank inference, consistency multiplier | 0.02s |
+| Stage 5 | `src/reasoning.py` | Deterministic reasoning compiler (top 100) | 1.93s |
 | Stage 6 | `src/rank.py` | Monotonicity assertion, honeypot and diversity audits, CSV write | <0.01s |
-| **Total** | | **End-to-end wall-clock** | **3.55s** |
+| **Total** | | **End-to-end wall-clock** | **4.00s** |
 
 The offline phases run once during development with no time or network restrictions. Only Stages 0 through 6 execute during the competition's 5-minute ranking window.
 
